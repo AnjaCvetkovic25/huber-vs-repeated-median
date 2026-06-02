@@ -49,6 +49,48 @@ def repeated_median(x, y):
         'row_medians': row_medians, 'label': 'Repeated Median'
     }
 
+
+
+def huber_m_estimator(x, y, c=1.345):
+    x = np.asarray(x)
+    y = np.asarray(y)
+    n = len(x)
+
+    ols = lstsq(x, y)
+    b0, b1 = ols['b0'], ols['b1']
+
+    for i in range(25):
+        y_hat = b0 + b1 * x
+        r = y - y_hat
+        s = np.median(np.abs(r)) / 0.6745
+        if s == 0:
+            break
+        u = r / s
+        w = np.ones(n)
+        outliers = np.abs(u) > c
+        w[outliers] = c / np.abs(u[outliers])
+
+        sw = np.sum(w)
+        xw = np.sum(w * x) / sw
+        yw = np.sum(w * y) / sw
+        Sxx = np.sum(w * (x - xw) ** 2)
+        if Sxx == 0:
+            break
+        b1_new = np.sum(w * (x - xw) * (y - yw)) / Sxx
+        b0_new = yw - b1_new * xw
+        if abs(b1_new - b1) < 10 ** -6:
+            b0, b1 = b0_new, b1_new
+            break
+        b0, b1 = b0_new, b1_new
+
+    y_hat = b0 + b1 * x
+    residuals = y - y_hat
+    return {
+        'b0': b0, 'b1': b1, 'residuals': residuals,
+        'label': 'Huber M-estimator'
+    }
+
+
 def residual_diagnostic(estimators, x):
     fig, axes = plt.subplots(2, len(estimators), figsize=(14, 8))
 
