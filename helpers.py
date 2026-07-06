@@ -5,8 +5,21 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from scipy import stats
 
-# IQR on residuals
 def outlier_detection(residuals):
+    """
+    Detektuje outliere primenom IQR metode na rezidualne vrednosti.
+
+    Parameters
+    ----------
+    residuals : pd.Series
+        Reziduali regresionog modela.
+
+    Returns
+    -------
+    list
+        [outlier_mask, lower_bound, upper_bound] gde je outlier_mask
+        bool maska (True = outlier), a granice su Q1 - 1.5*IQR i Q3 + 1.5*IQR.
+    """
     Q1 = residuals.quantile(0.25)
     Q3 = residuals.quantile(0.75)
     IQR = Q3 - Q1
@@ -15,35 +28,76 @@ def outlier_detection(residuals):
     return [(residuals < lower_bound) | (residuals > upper_bound), lower_bound, upper_bound]
 
 def print_outlier_detection_by_attribute(data, attr):
+    """
+    Štampa redove koji su detektovani kao outlieri za zadati atribut.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Skup podataka.
+    attr : str
+        Naziv kolone nad kojom se vrši detekcija outliera.
+    """
     outlier_indices_attr, _, _ = outlier_detection(data[attr])
     print(f"Outlier detection based on {attr}:")
     print(data[outlier_indices_attr])
 
 def lstsq(x, y):
+    """
+    Metoda najmanjih kvadrata za prostu linearnu regresiju.
+
+    Procenjuje parametre b0 i b1 modela y = b0 + b1*x minimizacijom
+    sume kvadrata reziduala.
+
+    Parameters
+    ----------
+    x : array-like
+        Vrednosti prediktora.
+    y : array-like
+        Vrednosti ciljne promenljive.
+
+    Returns
+    -------
+    dict
+        'b0'        : float - slobodan član
+        'b1'        : float - nagib
+        'residuals' : np.ndarray - reziduali y - y_pred
+        'label'     : str - 'LSTSQ'
+    """
     n = len(x)
     xm, ym = x.mean(), y.mean()
     b1 = np.sum((x - xm) * (y - ym)) / np.sum((x - xm) ** 2)
     b0 = ym - b1 * xm
     y_hat = b0 + b1 * x
     residuals = y - y_hat
-    sse = np.sum(residuals ** 2)
-    s2 = sse / (n - 2)
-    Sxx = np.sum((x - xm) ** 2)
-    se_b1 = np.sqrt(s2 / Sxx)
-    se_b0 = np.sqrt(s2 * (1/n + xm**2 / Sxx))
     return {
         'b0': b0, 'b1': b1, 'residuals': residuals,
-        'se_b0': se_b0, 'se_b1': se_b1, 'label': 'LSTSQ'
+        'label': 'LSTSQ'
     }
 
-
-#Repeated Median (Siegel 1982)
-#
-# b1 = median_i { median_{j!=i} { (y_j - y_i)/(x_j - x_i) } }
-# b0 = median_i { y_i - b1 * x_i }
-
-
 def repeated_median(x, y):
+    """
+    Repeated Median estimator (Siegel, 1982) za prostu linearnu regresiju.
+
+    Robusni estimator sa breakdown point-om od 50%. Nagib se procenjuje kao:
+        b1 = median_i { median_{j≠i} { (yj - yi) / (xj - xi) } }
+        b0 = median_i { yi - b1 * xi }
+
+    Parameters
+    ----------
+    x : array-like
+        Vrednosti prediktora.
+    y : array-like
+        Vrednosti ciljne promenljive.
+
+    Returns
+    -------
+    dict
+        'b0'          : float - slobodan član
+        'b1'          : float - nagib
+        'residuals'   : np.ndarray - reziduali y - y_pred
+        'label'       : str - 'Repeated Median'
+    """
     x = np.asarray(x)
     y = np.asarray(y)
     n = len(x)
@@ -58,12 +112,37 @@ def repeated_median(x, y):
     b0 = np.median(intercepts)
     return {
         'b0': b0, 'b1': b1, 'residuals': y - (b0 + b1 * x),
-        'row_medians': row_medians, 'label': 'Repeated Median'
+        'label': 'Repeated Median'
     }
 
 
 
 def huber_m_estimator(x, y, c=1.345):
+    """
+    Huberov M-estimator za prostu linearnu regresiju putem IRLS algoritma.
+
+    Koristi Huber težinsku funkciju za smanjenje uticaja outliera. Skala se
+    procenjuje kao median(|r|) / 0.6745, što je konzistentna procena standardne
+    devijacije pod normalnom raspodelom. Iterira do konvergencije ili 25 koraka.
+
+    Parameters
+    ----------
+    x : array-like
+        Vrednosti prediktora.
+    y : array-like
+        Vrednosti ciljne promenljive.
+    c : float, optional
+        Huberov prag osetljivosti. Tačke sa |u| > c dobijaju smanjenu težinu.
+        Podrazumevana vrednost 1.345 daje 95% efikasnost pod normalnom raspodelom.
+
+    Returns
+    -------
+    dict
+        'b0'        : float - slobodan član
+        'b1'        : float - nagib
+        'residuals' : np.ndarray - reziduali y - y_pred
+        'label'     : str - 'Huber M-estimator'
+    """
     x = np.asarray(x)
     y = np.asarray(y)
     n = len(x)
@@ -103,6 +182,21 @@ def huber_m_estimator(x, y, c=1.345):
     }
 
 def apply_estimators(x, y):
+    """
+    Primenjuje sva tri estimatora (LSTSQ, Repeated Median, Huber) na zadatim podacima.
+
+    Parameters
+    ----------
+    x : array-like
+        Vrednosti prediktora.
+    y : array-like
+        Vrednosti ciljne promenljive.
+
+    Returns
+    -------
+    list of dict
+        Lista rečnika rezultata u redosledu: [LSTSQ, Repeated Median, Huber].
+    """
     res_lstsq = lstsq(x, y)
     res_rep_med = repeated_median(x, y)
     res_huber = huber_m_estimator(x, y)
@@ -110,6 +204,22 @@ def apply_estimators(x, y):
 
 
 def residual_diagnostic(estimators, x):
+    """
+    Prikazuje dijagnostičke grafike i mere greške za listu estimatora.
+
+    Za svaki estimator generiše:
+    - Residuals vs Fitted plot (gornji red)
+    - Normal Q-Q plot (donji red)
+
+    Štampa tabelu sa MAD, RMSE i max|r| za svaki estimator.
+
+    Parameters
+    ----------
+    estimators : list of dict
+        Lista rezultata estimatora (izlaz iz apply_estimators ili pojedinačnih funkcija).
+    x : array-like
+        Vrednosti prediktora (koriste se za računanje fitted vrednosti).
+    """
     fig, axes = plt.subplots(2, len(estimators), figsize=(14, 8))
 
     for ci, res in enumerate(estimators):
@@ -141,12 +251,42 @@ def residual_diagnostic(estimators, x):
             f" {np.sqrt(np.mean(r**2)):>10.5f} {np.max(np.abs(r)):>10.5f}")
         
 def print_estimator_results(estimators):
+    """
+    Štampa procenjene parametre b0 i b1 za svaki estimator.
+
+    Parameters
+    ----------
+    estimators : list of dict
+        Lista rezultata estimatora.
+    """
     print(f"{'Estimator':<22} {'b0':>12} {'b1':>12}")
     print("-" * 48)
     for r in estimators:
         print(f"{r['label']:<22} {r['b0']:>12.5f} {r['b1']:>12.5f}")
         
 def regression_results(x_rob, y_rob, estimators_rob, x_col, y_col, outlier_injection_technique, outlier_indices=None):
+    """
+    Prikazuje scatter plot podataka sa fitovanim regresionim linijama sva tri estimatora.
+
+    Kontaminirane tačke su označene crvenim X markerom ako je prosleđen outlier_indices.
+
+    Parameters
+    ----------
+    x_rob : array-like
+        Vrednosti prediktora (potencijalno kontaminirane).
+    y_rob : array-like
+        Vrednosti ciljne promenljive (potencijalno kontaminirane).
+    estimators_rob : list of dict
+        Lista rezultata estimatora nad kontaminiranim podacima.
+    x_col : str
+        Naziv kolone prediktora (za oznake osa).
+    y_col : str
+        Naziv ciljne kolone (za oznake osa).
+    outlier_injection_technique : str
+        Opis tipa kontaminacije (koristi se u naslovu grafika).
+    outlier_indices : array-like, optional
+        Indeksi kontaminiranih tačaka. Ako je None, sve tačke su prikazane jednako.
+    """
     xgrid = np.linspace(x_rob.min(), x_rob.max(), 300)
     fig, ax = plt.subplots(figsize=(9, 6))
 
@@ -174,6 +314,33 @@ def regression_results(x_rob, y_rob, estimators_rob, x_col, y_col, outlier_injec
 
 
 def breakdown_analysis(x, y, mode='y0', rng_seed=42):
+    """
+    Analiza breakdown point-a postepenim ubacivanjem kontaminiranih tačaka.
+
+    Kumulativno dodaje jednu kontaminiranu tačku po iteraciji (do n//2 + 1)
+    i za svaki korak procenjuje nagib b1 sva tri estimatora.
+
+    Parameters
+    ----------
+    x : array-like
+        Vrednosti prediktora.
+    y : array-like
+        Vrednosti ciljne promenljive.
+    mode : {'y0', 'hlo', 'rn'}
+        Tip kontaminacije:
+        - 'y0'  : y = 0
+        - 'hlo' : high leverage + outlier
+        - 'rn'  : random noise
+    rng_seed : int, optional
+        Seed za reproduktibilnost nasumičnog odabira. Podrazumevano 42.
+
+    Returns
+    -------
+    results : dict
+        Rečnik {label: [b1_vrednosti]} za svaki estimator kroz iteracije.
+    outlier_num : int
+        Ukupan broj ubačenih outliera (n // 2 + 1).
+    """
     rng = np.random.default_rng(rng_seed)
     x_arr = np.asarray(x, dtype=float)
     y_arr = np.asarray(y, dtype=float)
@@ -208,6 +375,26 @@ def breakdown_analysis(x, y, mode='y0', rng_seed=42):
     return results, outlier_num
 
 def breakdown_plot(true_b1, results, outlier_num, n, mode):
+    """
+    Prikazuje grafik breakdown analize: nagib b1 u zavisnosti od procenta kontaminacije.
+
+    Crta teorijske breakdown tačke za Huber (25%) i Repeated Median (50%)
+    kao vertikalne isprekidane linije, i referentnu vrednost čistog b1 kao
+    horizontalnu tačkastu liniju.
+
+    Parameters
+    ----------
+    true_b1 : float
+        Referentna vrednost nagiba na čistim podacima (LSTSQ).
+    results : dict
+        Izlaz iz breakdown_analysis: {label: [b1_vrednosti]}.
+    outlier_num : int
+        Ukupan broj iteracija (ubačenih outliera).
+    n : int
+        Veličina originalnog skupa podataka.
+    mode : {'y0', 'rn', 'hlo'}
+        Tip kontaminacije (koristi se u naslovu grafika).
+    """
     fig, ax = plt.subplots(figsize=(10, 6))
 
     ax.axhline(true_b1, color='black', lw=1.5, ls=':', label=f'Clean b1 = {true_b1:.4f}')
